@@ -1,0 +1,102 @@
+---
+
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Description: luigi-app project
+
+Parameters:
+  SubnetIds:
+    Description: Subnets For ComputeEnvironment
+    Type: List<AWS::EC2::Subnet::Id>
+    Default: subnet-123
+  SecurityGroupIds:
+    Description: SecurityGroups For ComputeEnvironment
+    Type: List<AWS::EC2::SecurityGroup::Id>
+    Default: sg-123
+  KeyPair:
+    Description: key pair
+    Type: String
+    Default: my-key
+  env:
+    Description: environment
+    Type: String
+
+
+Resources:
+  # ========Role======== #
+  # Create Role
+  EcsInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+                - ecs-tasks.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AWSBatchFullAccess
+      Path: "/service-role/"
+
+  EcsInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      Roles:
+        - !Ref EcsInstanceRole
+
+  AWSBatchServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - batch.amazonaws.com
+                - ecs-tasks.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/service-role/AWSBatchServiceRole
+      Path: "/service-role/"
+
+  # ========Batch======== #
+  # Create ComputeEnvironment
+  LuigiComputeEnv:
+    Type: "AWS::Batch::ComputeEnvironment"
+    Properties:
+      Type: MANAGED
+      ServiceRole: !GetAtt AWSBatchServiceRole.Arn
+      ComputeEnvironmentName: !Sub "luigi-app-${env}-computing"
+      ComputeResources:
+        MaxvCpus: 256
+        MinvCpus: 0
+        DesiredvCpus: 0
+        SecurityGroupIds: !Ref SecurityGroupIds
+        Type: EC2
+        Subnets: !Ref SubnetIds
+        Ec2KeyPair: !Ref KeyPair
+        InstanceRole: !GetAtt EcsInstanceProfile.Arn
+        InstanceTypes:
+          - optimal
+        Tags:
+          Name: !Sub "luigi-app-batch-computer-${env}"
+      State: ENABLED
+
+  LuigiJobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment: !Ref LuigiComputeEnv
+      State: ENABLED
+      Priority: 1
+      JobQueueName: !Sub "luigi-app-${env}"
